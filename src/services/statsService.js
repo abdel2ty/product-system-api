@@ -31,6 +31,10 @@ export async function dashboardStats() {
     .map((c) => ({ id: c.id, name: c.name, code: c.code, count: store.countInCategory(c.id) }))
     .sort((a, b) => b.count - a.count);
 
+  const bySupplier = [...store.suppliers.values()]
+    .map((s) => ({ id: s.id, name: s.name, count: store.countInSupplier(s.id) }))
+    .sort((a, b) => b.count - a.count);
+
   const byWarranty = WARRANTY_BUCKETS.map((bucket) => ({
     key: bucket.key,
     label: bucket.label,
@@ -40,6 +44,39 @@ export async function dashboardStats() {
   const margins = products
     .filter((p) => p.supplierPrice > 0 && p.sellingPrice !== null)
     .map((p) => (p.sellingPrice - p.supplierPrice) / p.supplierPrice);
+
+  // Fixed percentage bands rather than data-driven ones, so the chart reads
+  // the same way from one day to the next as the catalogue grows.
+  const MARGIN_BANDS = [
+    { key: 'neg', label: 'Below 0%', min: -Infinity, max: 0 },
+    { key: '0-20', label: '0–20%', min: 0, max: 0.2 },
+    { key: '20-40', label: '20–40%', min: 0.2, max: 0.4 },
+    { key: '40-60', label: '40–60%', min: 0.4, max: 0.6 },
+    { key: '60-100', label: '60–100%', min: 0.6, max: 1 },
+    { key: '100+', label: 'Over 100%', min: 1, max: Infinity },
+  ];
+  const marginDistribution = MARGIN_BANDS.map((band) => ({
+    key: band.key,
+    label: band.label,
+    count: margins.filter((m) => m >= band.min && m < band.max).length,
+  }));
+
+  // A 14-day window of how many products were created vs. touched each day
+  // — the one chart here that shows change over time rather than a
+  // snapshot.
+  const ACTIVITY_DAYS = 14;
+  const dayKey = (iso) => iso.slice(0, 10);
+  const activity = [];
+  for (let i = ACTIVITY_DAYS - 1; i >= 0; i -= 1) {
+    const date = new Date(Date.now() - i * DAY);
+    const key = date.toISOString().slice(0, 10);
+    activity.push({
+      date: key,
+      added: products.filter((p) => dayKey(p.createdAt) === key).length,
+      updated: products.filter((p) => dayKey(p.updatedAt) === key && dayKey(p.updatedAt) !== dayKey(p.createdAt))
+        .length,
+    });
+  }
 
   const recent = (field) =>
     [...products]
@@ -57,7 +94,10 @@ export async function dashboardStats() {
     },
     completeness,
     byCategory,
+    bySupplier,
     byWarranty,
+    marginDistribution,
+    activity,
     pricing: {
       averageSupplierPrice: average(products.map((p) => p.supplierPrice)),
       averageSellingPrice: average(products.map((p) => p.sellingPrice)),
